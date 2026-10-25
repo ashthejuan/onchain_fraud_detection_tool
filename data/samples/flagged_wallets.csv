@@ -1,0 +1,3 @@
+chain_id,address,flag_reason
+1,0x9999999999999999999999999999999999999999,Synthetic demonstration wallet flagged for later rule-engine scenarios.
+1,0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,Synthetic demonstration wallet flagged for later rule-engine scenarios.
