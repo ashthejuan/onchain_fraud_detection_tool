@@ -37,6 +37,7 @@ def list_transactions(
     session: Annotated[Session, Depends(get_db)],
     chain_id: Annotated[int | None, Query(gt=0)] = None,
     address: Annotated[str | None, Query(min_length=1, max_length=256)] = None,
+    search: Annotated[str | None, Query(min_length=1, max_length=256)] = None,
     status: Literal["success", "failed", "pending"] | None = None,
     from_timestamp: datetime | None = None,
     to_timestamp: datetime | None = None,
@@ -53,6 +54,15 @@ def list_transactions(
     if normalized_address is not None:
         filters.append(
             or_(Transaction.from_address == normalized_address, Transaction.to_address == normalized_address)
+        )
+    if search is not None:
+        term = f"%{search.lower()}%"
+        filters.append(
+            or_(
+                Transaction.tx_hash.like(term),
+                Transaction.from_address.like(term),
+                Transaction.to_address.like(term),
+            )
         )
     if status is not None:
         filters.append(Transaction.status == status)

@@ -1,6 +1,7 @@
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session
 
@@ -11,13 +12,37 @@ from app.schemas.assessment import AlertPage, AssessmentRead
 router = APIRouter(tags=["risk"])
 
 
+class ReviewStatusUpdate(BaseModel):
+    review_status: Literal["open", "investigating", "resolved", "false_positive"]
+
+
+@router.patch("/alerts/{assessment_id}", response_model=AssessmentRead)
+def update_alert_status(
+    assessment_id: int,
+    body: ReviewStatusUpdate,
+    session: Annotated[Session, Depends(get_db)],
+) -> AssessmentRead:
+    row = session.execute(
+        select(RiskAssessment, Transaction)
+        .join(Transaction, Transaction.id == RiskAssessment.transaction_id)
+        .where(RiskAssessment.id == assessment_id)
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    assessment, transaction = row
+    assessment.review_status = body.review_status
+    session.commit()
+    session.refresh(assessment)
+    return AssessmentRead.model_validate({**assessment.__dict__, "transaction": transaction})
+
+
 @router.get("/alerts", response_model=AlertPage)
 def list_alerts(
     session: Annotated[Session, Depends(get_db)],
     severity: Literal["low", "medium", "high", "critical"] | None = None,
     min_score: Annotated[int | None, Query(ge=0, le=100)] = None,
     max_score: Annotated[int | None, Query(ge=0, le=100)] = None,
-    review_status: Literal["open", "reviewed", "dismissed"] | None = None,
+    review_status: Literal["open", "investigating", "resolved", "false_positive"] | None = None,
     search: Annotated[str | None, Query(min_length=1, max_length=256)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,

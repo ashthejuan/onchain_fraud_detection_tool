@@ -38,6 +38,7 @@ The import response reports accepted, rejected, and duplicate rows. Invalid rows
 - `POST /api/v1/transactions/ingest` — multipart upload with a `file` CSV field.
 - `GET /api/v1/transactions` — paginated list; supports `chain_id`, `address`, `status`, `from_timestamp`, and `to_timestamp` filters, plus `limit` and `offset`.
 - `GET /api/v1/transactions/{tx_hash}?chain_id=1` — transaction detail. `chain_id` is optional unless the same hash exists on multiple chains.
+- Transaction lists also accept `search` to match a hash or sender/recipient address.
 
 CSV columns required: `chain_id`, `tx_hash`, `from_address`, `to_address`, `amount`, `asset_symbol`, `timestamp`, and `status`. `block_number` is optional. Status values are `success`, `failed`, or `pending`. Timestamps should be ISO 8601; timezone-free values are interpreted as UTC. EVM-style `0x` hashes and addresses are lowercased for consistent deduplication and lookup. Uploads are limited to 10 MiB.
 
@@ -49,6 +50,8 @@ Newly accepted transactions are assessed during CSV ingestion. Assessments are a
 
 - `GET /api/v1/alerts` — filter by `severity`, `min_score`, `max_score`, `review_status`, or hash/address `search`; sorted highest score first. Supports `limit` and `offset`.
 - `GET /api/v1/assessments/{id}` — assessment, triggered rules, and transaction summary.
+- `PATCH /api/v1/alerts/{id}` — persist a `review_status` of `open`, `investigating`, `resolved`, or `false_positive`.
+- `GET /api/v1/wallets/{address}?chain_id=1` — local wallet flag record and provenance, or `null` when no local record exists.
 
 Seed the flagged wallet list before importing the synthetic detection scenarios. Expected hits are documented in `data/samples/EXPECTED.md`.
 
@@ -65,6 +68,21 @@ curl -X POST http://127.0.0.1:8000/api/v1/assessments/1/investigation-report \
 ```
 
 Reports are investigative aids. Their findings do not establish fraud.
+
+## Run the frontend
+
+The Next.js dashboard runs separately from the API. Start the backend first using the steps above, then in another terminal:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+Open `http://localhost:3000`. `NEXT_PUBLIC_API_BASE_URL` defaults to `http://127.0.0.1:8000`; change it in `frontend/.env.local` if the API runs elsewhere. The API's `CORS_ORIGINS` setting must include the frontend origin (the default is `http://localhost:3000`).
+
+The overview offers CSV import. From there, review alerts, open an alert to inspect its deterministic rules, update its review status, and generate an AI investigation report. Report generation requires the LLM settings described above. Wallet pages show local flag records and activity for the selected chain.
 
 ## Tests
 
