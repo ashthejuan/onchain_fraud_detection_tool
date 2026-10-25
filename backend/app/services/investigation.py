@@ -48,7 +48,28 @@ def build_evidence(session: Session, assessment: RiskAssessment, transaction: Tr
     return {"items": items[:30]}
 
 
+def _mock_report(evidence: dict[str, object]) -> dict[str, object]:
+    evidence_id = evidence["items"][0]["evidence_id"] if evidence["items"] else "assessment"
+    return {
+        "model": "mock-llm",
+        "report": {
+            "summary": "Deterministic mock investigation based only on supplied evidence.",
+            "evidence": [
+                {
+                    "evidence_id": evidence_id,
+                    "observation": "Observed values from the evidence package.",
+                    "interpretation": "This is a risk indicator for review, not proof of fraud.",
+                }
+            ],
+            "recommended_checks": ["Confirm counterparties against internal records."],
+            "limitations": ["Synthetic/mock output; alerts are risk indicators only."],
+        },
+    }
+
+
 def generate_report(evidence: dict[str, object]) -> dict[str, object]:
+    if settings.llm_provider.lower() == "mock":
+        return _mock_report(evidence)
     if not settings.llm_api_key:
         raise HTTPException(status_code=503, detail="LLM provider is not configured")
     evidence_items = evidence["items"]
@@ -85,6 +106,22 @@ def get_assessment(session: Session, assessment_id: int) -> tuple[RiskAssessment
     return row
 
 
+def _persist_failed_report(session: Session, assessment_id: int, evidence: dict[str, object], detail: str) -> None:
+    failed = InvestigationReport(
+        assessment_id=assessment_id,
+        status="failed",
+        model_name=settings.llm_model if settings.llm_provider.lower() != "mock" else "mock-llm",
+        prompt_version=PROMPT_VERSION,
+        evidence_snapshot=evidence,
+        report_json=None,
+        error_message=detail[:500],
+        created_at=datetime.now(timezone.utc),
+        completed_at=None,
+    )
+    session.add(failed)
+    session.commit()
+
+
 def make_report(session: Session, assessment_id: int, regenerate: bool = False) -> InvestigationReport:
     assessment, transaction = get_assessment(session, assessment_id)
     if not regenerate:
@@ -92,8 +129,12 @@ def make_report(session: Session, assessment_id: int, regenerate: bool = False) 
         if existing is not None:
             return existing
     evidence = build_evidence(session, assessment, transaction)
-    raw = generate_report(evidence)
-    model_name, report = validate_report(raw, evidence)
+    try:
+        raw = generate_report(evidence)
+        model_name, report = validate_report(raw, evidence)
+    except HTTPException as exc:
+        _persist_failed_report(session, assessment_id, evidence, str(exc.detail))
+        raise
     saved = InvestigationReport(assessment_id=assessment_id, status="completed", model_name=model_name, prompt_version=PROMPT_VERSION, evidence_snapshot=evidence, report_json=report, created_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc))
     session.add(saved)
     session.commit()

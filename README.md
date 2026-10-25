@@ -1,77 +1,29 @@
 # On-Chain Fraud Detection & AI Investigation Platform
 
-Phases 1 and 2 provide a FastAPI service backed by SQLite for importing transactions, scoring them with deterministic rules, and reviewing risk alerts.
+College MVP: import CSV transactions, score them with deterministic rules, review alerts in a Next.js dashboard, and optionally generate evidence-grounded LLM investigation reports.
+
+**Alerts are risk indicators for human review — not proof of fraud.**
 
 ## Requirements
 
-- Python 3.11 or newer
-- `pip`
+- Python 3.11+
+- Node.js 20+ (frontend)
+- Optional: NVIDIA NIM API key for live LLM reports (`LLM_PROVIDER=mock` works offline)
 
-## Run locally
-
-From the repository root:
+## Quick start
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r backend/requirements.txt
 cp backend/.env.example .env
+# Offline demo/CI: set LLM_PROVIDER=mock in .env
 python -m alembic -c backend/alembic.ini upgrade head
 PYTHONPATH=backend python backend/scripts/seed_wallets.py
 uvicorn --app-dir backend app.main:app --reload
 ```
 
-The SQLite database is created at `data/app.db`. The migration command must run before importing transactions. Interactive API documentation is available at `http://127.0.0.1:8000/docs`; health check is `http://127.0.0.1:8000/health`.
-
-## Import the sample data
-
-```bash
-curl -F 'file=@data/samples/baseline_transactions.csv' \
-  http://127.0.0.1:8000/api/v1/transactions/ingest
-curl 'http://127.0.0.1:8000/api/v1/transactions?limit=50'
-```
-
-The import response reports accepted, rejected, and duplicate rows. Invalid rows include a CSV line number and a validation reason. Re-importing the sample is safe: its existing `(chain_id, tx_hash)` records are counted as duplicates.
-
-## Transaction API
-
-- `POST /api/v1/transactions/ingest` — multipart upload with a `file` CSV field.
-- `GET /api/v1/transactions` — paginated list; supports `chain_id`, `address`, `status`, `from_timestamp`, and `to_timestamp` filters, plus `limit` and `offset`.
-- `GET /api/v1/transactions/{tx_hash}?chain_id=1` — transaction detail. `chain_id` is optional unless the same hash exists on multiple chains.
-- Transaction lists also accept `search` to match a hash or sender/recipient address.
-
-CSV columns required: `chain_id`, `tx_hash`, `from_address`, `to_address`, `amount`, `asset_symbol`, `timestamp`, and `status`. `block_number` is optional. Status values are `success`, `failed`, or `pending`. Timestamps should be ISO 8601; timezone-free values are interpreted as UTC. EVM-style `0x` hashes and addresses are lowercased for consistent deduplication and lookup. Uploads are limited to 10 MiB.
-
-Flagged wallets for later detection rules are in `data/samples/flagged_wallets.csv`. The seed script is idempotent and requires the migration to have run.
-
-## Risk detection API
-
-Newly accepted transactions are assessed during CSV ingestion. Assessments are append-only and use `ruleset-v1`: large transfers (≥100 units), five successful outgoing transfers in 10 minutes, forwarding after a receipt within 30 minutes, exposure to a locally flagged wallet, and three failed outgoing transfers in 10 minutes. Weights are summed and capped at 100; overlapping triggers can contribute together. Assessment rules and their evidence references are persisted with the transaction.
-
-- `GET /api/v1/alerts` — filter by `severity`, `min_score`, `max_score`, `review_status`, or hash/address `search`; sorted highest score first. Supports `limit` and `offset`.
-- `GET /api/v1/assessments/{id}` — assessment, triggered rules, and transaction summary.
-- `PATCH /api/v1/alerts/{id}` — persist a `review_status` of `open`, `investigating`, `resolved`, or `false_positive`.
-- `GET /api/v1/wallets/{address}?chain_id=1` — local wallet flag record and provenance, or `null` when no local record exists.
-
-Seed the flagged wallet list before importing the synthetic detection scenarios. Expected hits are documented in `data/samples/EXPECTED.md`.
-
-## LLM investigation reports
-
-Phase 3 adds `POST /api/v1/assessments/{id}/investigation-report` and `GET /api/v1/reports/{id}`. The POST request accepts `{"regenerate": false}`; completed reports are reused unless regeneration is requested. Evidence is assembled from the stored assessment, transaction, related wallet activity, and local wallet flags. Model output is schema-validated and citations to evidence IDs are checked before it is saved.
-
-Copy `backend/.env.example` to the repository-root `.env`, then set `LLM_API_KEY` to your NVIDIA API key. The default `LLM_BASE_URL` is NVIDIA NIM's OpenAI-compatible endpoint and `LLM_MODEL` is an NVIDIA-hosted model identifier; change the model if needed for your NIM account. Apply the new migration before calling the endpoint:
-
-```bash
-python -m alembic -c backend/alembic.ini upgrade head
-curl -X POST http://127.0.0.1:8000/api/v1/assessments/1/investigation-report \
-  -H 'Content-Type: application/json' -d '{"regenerate": false}'
-```
-
-Reports are investigative aids. Their findings do not establish fraud.
-
-## Run the frontend
-
-The Next.js dashboard runs separately from the API. Start the backend first using the steps above, then in another terminal:
+SQLite DB: `data/app.db`. API docs: `http://127.0.0.1:8000/docs`. Health: `http://127.0.0.1:8000/health`.
 
 ```bash
 cd frontend
@@ -80,14 +32,78 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Open `http://localhost:3000`. `NEXT_PUBLIC_API_BASE_URL` defaults to `http://127.0.0.1:8000`; change it in `frontend/.env.local` if the API runs elsewhere. The API's `CORS_ORIGINS` setting must include the frontend origin (the default is `http://localhost:3000`).
+Open `http://localhost:3000`. Ensure `CORS_ORIGINS` includes the frontend origin (default `http://localhost:3000`).
 
-The overview offers CSV import. From there, review alerts, open an alert to inspect its deterministic rules, update its review status, and generate an AI investigation report. Report generation requires the LLM settings described above. Wallet pages show local flag records and activity for the selected chain.
+## Demo in one shot
+
+See **`docs/DEMO.md`**. Seed wallets, then import `data/samples/demo/demo_transactions.csv`. Expected hits: `data/samples/EXPECTED.md`.
+
+```bash
+curl -F 'file=@data/samples/demo/demo_transactions.csv' \
+  http://127.0.0.1:8000/api/v1/transactions/ingest
+```
+
+## API surface
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/transactions/ingest` | CSV upload |
+| `GET` | `/api/v1/transactions` | List / filter |
+| `GET` | `/api/v1/transactions/{tx_hash}` | Detail |
+| `GET` | `/api/v1/alerts` | Risk queue |
+| `GET` | `/api/v1/assessments/{id}` | Assessment detail |
+| `PATCH` | `/api/v1/alerts/{id}` | Review status |
+| `POST` | `/api/v1/assessments/{id}/investigation-report` | Generate / reuse report |
+| `GET` | `/api/v1/reports/{id}` | Fetch report |
+| `GET` | `/api/v1/wallets/{address}` | Local flag record |
+
+CSV columns: `chain_id`, `tx_hash`, `from_address`, `to_address`, `amount`, `asset_symbol`, `timestamp`, `status` (`success`\|`failed`\|`pending`); `block_number` optional. Unique key: `(chain_id, tx_hash)`.
+
+## Detection (`ruleset-v1`)
+
+| Rule | Weight |
+|------|-------:|
+| Large transfer (≥100 units) | 25 |
+| High velocity (5 successful outs / 10 min) | 25 |
+| Rapid fund movement (send after receive / 30 min) | 30 |
+| Flagged wallet exposure | 40 |
+| Repeated failures (3 failed outs / 10 min) | 15 |
+
+Weights sum and cap at 100. Severity: low &lt;25, medium &lt;50, high &lt;75, else critical.
+
+## LLM reports
+
+Evidence is built only from DB records. Model JSON is schema-validated; unknown evidence IDs are rejected. Completed reports are reused unless `{"regenerate": true}`. Provider failures leave assessments unchanged and store a `failed` report.
+
+```bash
+# .env
+LLM_PROVIDER=nvidia   # or mock
+LLM_API_KEY=...
+LLM_BASE_URL=https://integrate.api.nvidia.com/v1
+LLM_MODEL=meta/llama-3.3-70b-instruct
+```
 
 ## Tests
-
-From the repository root:
 
 ```bash
 PYTHONPATH=backend python3 -m pytest backend/tests
 ```
+
+Layout: `backend/tests/unit/` (rules, validation) and `backend/tests/integration/` (ingest, alerts, investigation, scenario CSV). CI-friendly path uses `LLM_PROVIDER=mock` or monkeypatched providers — no live key required.
+
+## Documentation
+
+| Doc | Contents |
+|-----|----------|
+| `docs/architecture.md` | Components and data flow |
+| `docs/limitations.md` | Non-goals, uncertainty, mitigations |
+| `docs/DEMO.md` | Step-by-step presentation script |
+| `docs/evaluation.md` | Synthetic metrics (no real-world accuracy claims) |
+| `context/prd.md` | Full product requirements |
+
+## Environment examples
+
+- Backend: `backend/.env.example` → copy to repo-root `.env`
+- Frontend: `frontend/.env.example` → `frontend/.env.local` (`NEXT_PUBLIC_API_BASE_URL`)
+
+Never commit real secrets. API keys are server-side only.
