@@ -1,4 +1,9 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+_PROJECT_ROOT = _BACKEND_DIR.parent
 
 
 class Settings(BaseSettings):
@@ -10,7 +15,11 @@ class Settings(BaseSettings):
     llm_model: str = "meta/llama-3.3-70b-instruct"
     llm_timeout_seconds: int = 45
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Root .env first; backend/.env overrides when both exist (cwd-independent).
+    model_config = SettingsConfigDict(
+        env_file=(_PROJECT_ROOT / ".env", _BACKEND_DIR / ".env"),
+        extra="ignore",
+    )
 
     @property
     def allowed_origins(self) -> list[str]:
