@@ -52,6 +52,20 @@ Newly accepted transactions are assessed during CSV ingestion. Assessments are a
 
 Seed the flagged wallet list before importing the synthetic detection scenarios. Expected hits are documented in `data/samples/EXPECTED.md`.
 
+## LLM investigation reports
+
+Phase 3 adds `POST /api/v1/assessments/{id}/investigation-report` and `GET /api/v1/reports/{id}`. The POST request accepts `{"regenerate": false}`; completed reports are reused unless regeneration is requested. Evidence is assembled from the stored assessment, transaction, related wallet activity, and local wallet flags. Model output is schema-validated and citations to evidence IDs are checked before it is saved.
+
+Copy `backend/.env.example` to the repository-root `.env`, then set `LLM_API_KEY` to your NVIDIA API key. The default `LLM_BASE_URL` is NVIDIA NIM's OpenAI-compatible endpoint and `LLM_MODEL` is an NVIDIA-hosted model identifier; change the model if needed for your NIM account. Apply the new migration before calling the endpoint:
+
+```bash
+python -m alembic -c backend/alembic.ini upgrade head
+curl -X POST http://127.0.0.1:8000/api/v1/assessments/1/investigation-report \
+  -H 'Content-Type: application/json' -d '{"regenerate": false}'
+```
+
+Reports are investigative aids. Their findings do not establish fraud.
+
 ## Tests
 
 From the repository root:

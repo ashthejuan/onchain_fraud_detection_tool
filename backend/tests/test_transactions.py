@@ -11,6 +11,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models import Wallet
+from app.services import investigation as investigation_service
 
 
 @pytest.fixture
@@ -188,3 +189,33 @@ def test_phase_two_rules_work_through_ingest_and_alerts(client: TestClient) -> N
     assert duplicate.json()["accepted"] == 0
     assert duplicate.json()["duplicates"] == 20
     assert client.get("/api/v1/alerts?limit=200").json()["total"] == 20
+
+
+def test_investigation_report_uses_validated_evidence_and_reuses_completed_report(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    client.post("/api/v1/transactions/ingest", files={"file": ("large.csv", _csv("1,0xlarge,0xsender,0xreceiver,150,ETH,2026-01-01T00:00:00Z,success,100"), "text/csv")})
+    alert = client.get("/api/v1/alerts").json()["items"][0]
+    calls = []
+
+    def fake_generate(evidence):
+        calls.append(evidence)
+        return {"model": "test", "report": {"summary": "Large transfer observed.", "evidence": [{"evidence_id": "transaction_1", "observation": "A 150 ETH transfer occurred.", "interpretation": "This is a large transfer."}], "recommended_checks": ["Review recipient history."], "limitations": ["Fraud is not established."]}}
+
+    monkeypatch.setattr(investigation_service, "generate_report", fake_generate)
+    first = client.post(f"/api/v1/assessments/{alert['id']}/investigation-report", json={})
+    second = client.post(f"/api/v1/assessments/{alert['id']}/investigation-report", json={})
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "completed"
+    assert first.json()["report"]["summary"] == "Large transfer observed."
+    assert second.json()["report_id"] == first.json()["report_id"]
+    assert len(calls) == 1
+
+
+def test_investigation_report_rejects_unknown_evidence_id(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    client.post("/api/v1/transactions/ingest", files={"file": ("large.csv", _csv("1,0xlarge,0xsender,0xreceiver,150,ETH,2026-01-01T00:00:00Z,success,100"), "text/csv")})
+    alert = client.get("/api/v1/alerts").json()["items"][0]
+    monkeypatch.setattr(investigation_service, "generate_report", lambda evidence: {"model": "test", "report": {"summary": "Claim.", "evidence": [{"evidence_id": "made_up", "observation": "x", "interpretation": "y"}], "recommended_checks": [], "limitations": []}})
+
+    response = client.post(f"/api/v1/assessments/{alert['id']}/investigation-report", json={})
+
+    assert response.status_code == 502
