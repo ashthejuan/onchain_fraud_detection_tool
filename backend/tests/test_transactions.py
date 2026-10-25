@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from pathlib import Path
+import ssl
 
 import pytest
 from fastapi.testclient import TestClient
@@ -219,3 +220,10 @@ def test_investigation_report_rejects_unknown_evidence_id(client: TestClient, mo
     response = client.post(f"/api/v1/assessments/{alert['id']}/investigation-report", json={})
 
     assert response.status_code == 502
+
+
+def test_provider_ssl_context_verifies_nvidia_tls_certificate() -> None:
+    context = investigation_service.provider_ssl_context()
+
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
